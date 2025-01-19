@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "jaxgboost"
+version = "0.1.0"
+description = ""
+authors = ["Amedeo Biolatti <amedeo.biolatti@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+jax = ">=0.4.0"
+chex = "^0.1.88"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
