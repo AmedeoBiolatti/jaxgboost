@@ -17,14 +17,14 @@ pip install git+https://github.com/AmedeoBiolatti/jaxgboost
 import jaxgboost
 
 # load your training and test data
-(X_train, y_train), (X_test, y_test) = load_dataset()
+(X_train, y_train), (X_valid, y_valid) = load_dataset()
 
 # Create and train the model
 model = jaxgboost.JAXGBoostModel()
 model.fit(X_train, y_train)
 
 # Make predictions
-pred = model.predict(X_test)
+pred = model.predict(X_valid)
 ```
 
 ### Advanced usage
@@ -32,6 +32,8 @@ pred = model.predict(X_test)
 JAXGBoost supports JAX functionalities such as `jit` and `vmap`. Here's an example:
 
 ```python
+import jax
+
 # Create a jitted vectorized function
 @jax.jit
 @jax.vmap
