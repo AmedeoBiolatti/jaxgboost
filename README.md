@@ -1,22 +1,38 @@
-# JAXGBoost
+# JAXGBoost: Gradient Boosting for [JAX](https://github.com/jax-ml/jax)
 
-JAXGBoost is an extreme gradient boosting package completely implemented in JAX.
-It tries to keep as much as possible of the interface the same of XGBoost/Lightgbm, but with the objective of being
-completely interoperative with JAX.
+JAXGBoost is a Python library implementing gradient boosting machines in pure JAX.
 
-### Basic usage
+It aims to keep the interface as similar as possible to XGBoost/LightGBM, while offering seamless interoperability with
+JAX ecosystem.
 
-```python
-model = jaxgboost.JAXGBoostModel()
-model.fit(X, y)
-pred = model.predict(X)
+### Installation
+
+```
+pip install git+https://github.com/AmedeoBiolatti/jaxgboost
 ```
 
-### Advanced
-
-JAXGBoost is fully compatible with JAX functionality, such as `jax.jit` and/or `jax.vmap`
+### Quickstart
 
 ```python
+import jaxgboost
+
+# load your training and test data
+(X_train, y_train), (X_test, y_test) = load_dataset()
+
+# Create and train the model
+model = jaxgboost.JAXGBoostModel()
+model.fit(X_train, y_train)
+
+# Make predictions
+pred = model.predict(X_test)
+```
+
+### Advanced usage
+
+JAXGBoost supports JAX functionalities such as `jit` and `vmap`. Here's an example:
+
+```python
+# Create a jitted vectorized function
 @jax.jit
 @jax.vmap
 def fit_and_eval(params):
@@ -25,12 +41,16 @@ def fit_and_eval(params):
     return jnp.mean((y_valid - model.predict(X_valid)) ** 2)
 
 
-predictions = fit_and_eval({"learning_rate": jnp.linspace(0.01, 0.3, 10)})
-print(predictions.shape)
+# Evaluate the function on 10 parameters values at the same time
+mse_values = fit_and_eval({"learning_rate": jnp.linspace(0.01, 0.3, 10)})
+print(mse_values.shape)
 # prints (10,)
 ```
 
 ### Roadmap
 
 - [x] exact layer-wise tree building
-- [ ] exact loss-guide tree building
+- [ ] loss-guide tree building
+- [ ] hist tree building
+- [ ] gradient-friendly implementation for hyper-opt
+- [ ] "softened" prediction for better integration in NN
