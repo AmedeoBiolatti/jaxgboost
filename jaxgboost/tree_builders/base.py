@@ -10,11 +10,15 @@ class TreeBuilder:
             reg_lambda: float = 1.0,
             reg_alpha: float = 0.0,
             min_split_loss: float = 0.0,
+            max_depth: int = 6,
+            min_child_weight: float = 0.0
     ):
         self.loss = losses.get(objective)
         self.reg_lambda = reg_lambda
         self.reg_alpha = reg_alpha
         self.min_split_loss = min_split_loss
+        self.max_depth = max_depth
+        self.min_child_weight = min_child_weight
 
     def _get_leaves(self, g, h) -> jax.numpy.ndarray:
         den = (self.reg_lambda + h)

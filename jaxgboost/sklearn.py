@@ -3,6 +3,13 @@ import jax
 from jaxgboost import booster, tree_builders
 
 
+def get_tree_builder():
+    if len(jax.devices()) > 1:
+        return tree_builders.ExactLayerWisePMapTreesBuilder
+    else:
+        return tree_builders.ExactLayerWiseTreesBuilder
+
+
 class JAXGBoostModel:
     def __init__(
             self,
@@ -22,7 +29,7 @@ class JAXGBoostModel:
             random_state: int = 42,
             jit: bool = True
     ):
-        self.tree_builder = tree_builders.ExactLayerWiseTreesBuilder(
+        self.tree_builder = get_tree_builder()(
             objective=objective,
             max_depth=max_depth,
             reg_lambda=reg_lambda,

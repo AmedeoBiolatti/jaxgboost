@@ -1,1 +1,3 @@
 from jaxgboost.tree_builders.exact_layerwise import ExactLayerWiseTreesBuilder
+from jaxgboost.tree_builders.exact_layerwise_vmap import ExactLayerWiseVMapTreesBuilder
+from jaxgboost.tree_builders.exact_layerwise_pmap import ExactLayerWisePMapTreesBuilder
