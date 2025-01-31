@@ -6,13 +6,6 @@ from jaxgboost import losses
 from jaxgboost.tree_builders.base import TreeBuilder
 from jaxgboost.trees.tree import GHTree
 
-"""
-TODO
-- [ ] stop loop early if sum_hess < min_child_weight
-- [ ] column parallel using pmap
-- [ ] buffering in the most inner loop
-"""
-
 
 class ExactLayerWiseTreesBuilder(TreeBuilder):
     def __init__(
@@ -24,9 +17,14 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             max_depth: int = 6,
             min_child_weight: float = 0.0
     ):
-        super().__init__(objective=objective, reg_lambda=reg_lambda, reg_alpha=reg_alpha, min_split_loss=min_split_loss)
-        self.max_depth = max_depth
-        self.min_child_weight = min_child_weight
+        super().__init__(
+            objective=objective,
+            reg_lambda=reg_lambda,
+            reg_alpha=reg_alpha,
+            min_split_loss=min_split_loss,
+            max_depth=max_depth,
+            min_child_weight=min_child_weight
+        )
 
     def get_aux_data(
             self,
@@ -110,7 +108,6 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
         h_leaves = jax.numpy.sum(leaf_one_hot * jax.numpy.expand_dims(h, 1), axis=0)
 
         values = self._get_leaves(g_leaves, h_leaves)
-
         return self.to_ghtree(splits, values)
 
     def to_ghtree(self, splits, values):
