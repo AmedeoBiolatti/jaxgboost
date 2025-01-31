@@ -1,8 +1,10 @@
 import chex
 import jax
+from matplotlib.rcsetup import validate_int
 
 from jaxgboost import losses
 from jaxgboost.tree_builders.base import TreeBuilder
+from jaxgboost.trees.tree import GHTree
 
 """
 TODO
@@ -45,7 +47,7 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             *,
             aux_data: dict[str, jax.numpy.ndarray] | None = None,
             **kwargs,
-    ) -> tuple["Tree", jax.numpy.ndarray]:
+    ) -> GHTree:
         chex.assert_equal(x.shape[0], y.shape[0])
         if sample_weight is not None:
             chex.assert_equal(x.shape[0], p.shape[0])
@@ -108,10 +110,40 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
         h_leaves = jax.numpy.sum(leaf_one_hot * jax.numpy.expand_dims(h, 1), axis=0)
 
         values = self._get_leaves(g_leaves, h_leaves)
-        p = jax.numpy.sum(jax.numpy.expand_dims(values, 0) * leaf_one_hot, axis=1)
 
-        tree = splits, values
-        return tree, p
+        return self.to_ghtree(splits, values)
+
+    def to_ghtree(self, splits, values):
+        cols, thrs = splits
+        num_nodes = 2 ** (self.max_depth + 1) - 1
+        num_splits = 2 ** self.max_depth - 1
+
+        col0 = jax.numpy.concat([cols[i, :int(2 ** i)][::-1] for i in range(self.max_depth)])
+        thr0 = jax.numpy.concat([thrs[i, :int(2 ** i)][::-1] for i in range(self.max_depth)])
+
+        col = jax.numpy.zeros((num_nodes,), dtype=jax.numpy.uint32).at[:num_splits].set(col0)
+        thr = jax.numpy.zeros((num_nodes,)).at[:num_splits].set(thr0)
+        val = jax.numpy.zeros((num_nodes, values.shape[-1])).at[num_splits:].set(values[::-1])
+
+        depth = jax.numpy.log2(1 + jax.numpy.arange(num_nodes)).astype(jax.numpy.uint32)
+        ghtree = GHTree(
+            depth=depth,
+
+            # split
+            is_split=depth < depth.max(),
+            col=col,
+            thr=thr,
+            gain=jax.numpy.zeros((num_nodes,)),
+            l_child_id=jax.numpy.arange(num_nodes) * 2 + 1,
+            r_child_id=jax.numpy.arange(num_nodes) * 2 + 2,
+
+            # leaf
+            is_leaf=depth == depth.max(),
+            gh_sum=jax.numpy.zeros((num_nodes, 1, 2)),
+            score=jax.numpy.zeros((num_nodes,)),
+            value=val
+        )
+        return ghtree
 
     def _get_splits_at_level(
             self,
@@ -194,10 +226,19 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             do_update &= (gh_l[pos, ..., 1].sum() >= self.min_child_weight)
             do_update &= (gh_r[pos, ..., 1].sum() >= self.min_child_weight)
 
-            best_score = jax.lax.cond(do_update, lambda: best_score.at[pos].set(split_score), lambda: best_score)
-            best_split = jax.lax.cond(do_update, lambda: best_split.at[pos].set(split), lambda: best_split)
-            best_gh_l = jax.lax.cond(do_update, lambda: best_gh_l.at[pos].set(gh_l[pos]), lambda: best_gh_l)
-            best_gh_r = jax.lax.cond(do_update, lambda: best_gh_r.at[pos].set(gh_r[pos]), lambda: best_gh_r)
+            def do_update_fn():
+                return (
+                    best_score.at[pos].set(split_score),
+                    best_split.at[pos].set(split),
+                    best_gh_l.at[pos].set(gh_l[pos]),
+                    best_gh_r.at[pos].set(gh_r[pos])
+                )
+
+            best_score, best_split, best_gh_l, best_gh_r = jax.lax.cond(
+                do_update,
+                do_update_fn,
+                lambda: (best_score, best_split, best_gh_l, best_gh_r)
+            )
 
             # update with current observation statistics, will be used in the next iteration
             gh_l = gh_l.at[pos].add(gh_i)
