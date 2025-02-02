@@ -63,7 +63,8 @@ class GHTree:
 
     def predict_value(self, x):
         leaf_id = self.predict_leaf_id(x)
-        return self.value[leaf_id]
+        value = self.value[leaf_id]
+        return value
 
         # leaf_oh = jax.nn.one_hot(leaf_id, self.value.shape[0])
         # return jax.numpy.sum(jax.numpy.expand_dims(leaf_oh, -1) * jax.numpy.expand_dims(self.value, 0), 1)

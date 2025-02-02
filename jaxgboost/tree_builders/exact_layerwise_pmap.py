@@ -12,8 +12,10 @@ class ExactLayerWisePMapTreesBuilder(ExactLayerWiseTreesBuilder):
             reg_alpha: float = 0.0,
             min_split_loss: float = 0.0,
             max_depth: int = 6,
-            min_child_weight: float = 0.0
+            min_child_weight: float = 0.0,
+            num_leaves: int = -1
     ):
+        assert num_leaves == -1
         super().__init__(
             objective=objective,
             reg_lambda=reg_lambda,

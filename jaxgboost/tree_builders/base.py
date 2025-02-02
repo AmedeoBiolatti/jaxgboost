@@ -21,6 +21,18 @@ class TreeBuilder:
         self.min_child_weight = min_child_weight
         self.num_leaves = num_leaves
 
+    def build_tree(
+            self,
+            x: jax.numpy.ndarray,
+            y: jax.numpy.ndarray,
+            p: jax.numpy.ndarray | None = None,
+            sample_weight: jax.numpy.ndarray | None = None,
+            *,
+            aux_data: dict[str, jax.numpy.ndarray] | None = None,
+            **kwargs,
+    ):
+        raise NotImplementedError
+
     def get_leaf_value(self, gh):
         g, h = gh[..., 0], gh[..., 1]
         den = (self.reg_lambda + h)

@@ -15,8 +15,10 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             reg_alpha: float = 0.0,
             min_split_loss: float = 0.0,
             max_depth: int = 6,
-            min_child_weight: float = 0.0
+            min_child_weight: float = 0.0,
+            num_leaves: int = -1
     ):
+        assert num_leaves == -1, f"num_leaves should be -1, {num_leaves} instead"
         super().__init__(
             objective=objective,
             reg_lambda=reg_lambda,
@@ -82,7 +84,6 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
 
         leaf_one_hot = jax.nn.one_hot(position, num_leaves).reshape(n_obs, num_leaves, 1)
         gh_leaves = jax.numpy.sum(leaf_one_hot * gh, axis=0)
-
         values = self.get_leaf_value(gh_leaves)
         return self.to_ghtree(splits, values)
 
@@ -90,6 +91,9 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
         cols, thrs = splits
         num_nodes = 2 ** (self.max_depth + 1) - 1
         num_splits = 2 ** self.max_depth - 1
+
+        if values.ndim == 1:
+            values = jax.numpy.reshape(values, (-1, 1))
 
         col0 = jax.numpy.concat([cols[i, :int(2 ** i)][::-1] for i in range(self.max_depth)])
         thr0 = jax.numpy.concat([thrs[i, :int(2 ** i)][::-1] for i in range(self.max_depth)])
@@ -153,7 +157,7 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             state = best_score, best_col, best_split, best_gh_l, best_gh_r
             return state
 
-        best_score = self._get_score(gh_sum) + self.min_split_loss
+        best_score = self.get_score(gh_sum) + self.min_split_loss
         best_col = jax.numpy.zeros((num_leaves,), dtype=jax.numpy.uint32)
         best_split = jax.numpy.zeros((num_leaves,)) - jax.numpy.inf
         best_gh_l = jax.numpy.zeros_like(gh_sum)
@@ -192,7 +196,7 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
 
             # check the split at 0.5 (fvalue + prev_fvalue)
             split = 0.5 * (fvalue + prev_fvalue[pos])
-            split_score = self._get_score(gh_l[pos]) + self._get_score(gh_r[pos])
+            split_score = self.get_score(gh_l[pos]) + self.get_score(gh_r[pos])
 
             do_update = (split_score > best_score[pos])
             do_update &= (split != fvalue)
