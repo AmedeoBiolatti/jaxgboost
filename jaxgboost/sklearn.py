@@ -3,11 +3,18 @@ import jax
 from jaxgboost import booster, tree_builders
 
 
-def get_tree_builder():
-    if len(jax.devices()) > 1:
-        return tree_builders.ExactLayerWisePMapTreesBuilder
+def get_tree_builder(
+        grow_policy
+):
+    if grow_policy.lower() in ["depthwise", "layerwise"]:
+        if len(jax.devices()) > 1:
+            return tree_builders.ExactLayerWisePMapTreesBuilder
+        else:
+            return tree_builders.ExactLayerWiseTreesBuilder
+    elif grow_policy.lower() in ["lossguide"]:
+        return tree_builders.LossGuideTreeBuilder
     else:
-        return tree_builders.ExactLayerWiseTreesBuilder
+        raise ValueError(f"No known grow_policy named '{grow_policy}'")
 
 
 class JAXGBoostModel:
@@ -26,16 +33,21 @@ class JAXGBoostModel:
             min_split_loss: float = 0.0,
             max_depth: int = 6,
             min_child_weight: float = 0.0,
+            grow_policy: str = "depthwise",
+            num_leaves=None,
             random_state: int = 42,
             jit: bool = True
     ):
-        self.tree_builder = get_tree_builder()(
+        self.tree_builder = get_tree_builder(
+            grow_policy=grow_policy
+        )(
             objective=objective,
             max_depth=max_depth,
             reg_lambda=reg_lambda,
             reg_alpha=reg_alpha,
             min_split_loss=min_split_loss,
-            min_child_weight=min_child_weight
+            min_child_weight=min_child_weight,
+            num_leaves=num_leaves
         )
         self.booster = booster.Booster(
             self.tree_builder,

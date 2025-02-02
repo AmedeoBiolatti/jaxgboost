@@ -1,10 +1,14 @@
 import jax
 
+from jaxgboost.tree_builders.base import TreeBuilder
+
+from jaxgboost.trees.tree import GHTree
+
 
 class Booster:
     def __init__(
             self,
-            tree_builder: "TreesBuilder",
+            tree_builder: TreeBuilder,
             n_estimators: int = 100,
             learning_rate: float = 0.1,
             base_score: float | None = None,
@@ -57,23 +61,22 @@ class Booster:
                     x, y, current_p, sample_weight, aux_data, key_
                 )
 
-                tree, tree_p = self.tree_builder.build_tree(
+                tree: GHTree = self.tree_builder.build_tree(
                     x_,
                     y_,
                     current_p_,
                     aux_data=aux_data_,
                     sample_weight=sample_weight_
                 )
+                tree_p = tree.predict_value(x_)
 
                 tree_p = self.learning_rate * tree_p
                 if self.max_delta_step is not None:
                     tree_p = jax.numpy.clip(tree_p, -self.max_delta_step, +self.max_delta_step)
 
-                splits, values = tree
-                values = self.learning_rate * values
+                tree.value = self.learning_rate * tree.value
                 if self.max_delta_step is not None:
-                    values = jax.numpy.clip(values, -self.max_delta_step, +self.max_delta_step)
-                tree = splits, values
+                    tree.value = jax.numpy.clip(tree.value, -self.max_delta_step, +self.max_delta_step)
 
                 return tree, tree_p
 
@@ -81,8 +84,7 @@ class Booster:
                 build_one_tree_parallel,
             )(jax.random.split(prng_key_, self.num_parallel_trees))
 
-            split, values = tree
-            tree = split, values / self.num_parallel_trees
+            tree.value = tree.value / self.num_parallel_trees
             tree_p = tree_p.mean(0)
 
             return current_p + tree_p, tree
@@ -100,14 +102,11 @@ class Booster:
             length=self.n_estimators if prng_key is None else None
         )
 
-        splits, values = trees
-        values = values.at[0, :].add(base_score_squeezed)
-        trees = splits, values
-
+        trees.value = trees.value.at[0, :].add(base_score_squeezed)
         return trees, p
 
     def predict_values(self, trees, x):
-        predict_values = self.tree_builder.predict_values
+        predict_values = GHTree.predict_value
         predict_values = jax.vmap(predict_values, (0, None))
         predict_values = jax.vmap(predict_values, (0, None))
         p = predict_values(trees, x)

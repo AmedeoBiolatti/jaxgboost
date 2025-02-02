@@ -1,15 +1,10 @@
 import chex
 import jax
+from matplotlib.rcsetup import validate_int
 
 from jaxgboost import losses
 from jaxgboost.tree_builders.base import TreeBuilder
-
-"""
-TODO
-- [ ] stop loop early if sum_hess < min_child_weight
-- [ ] column parallel using pmap
-- [ ] buffering in the most inner loop
-"""
+from jaxgboost.trees.tree import GHTree
 
 
 class ExactLayerWiseTreesBuilder(TreeBuilder):
@@ -20,21 +15,18 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             reg_alpha: float = 0.0,
             min_split_loss: float = 0.0,
             max_depth: int = 6,
-            min_child_weight: float = 0.0
+            min_child_weight: float = 0.0,
+            num_leaves: int = -1
     ):
-        super().__init__(objective=objective, reg_lambda=reg_lambda, reg_alpha=reg_alpha, min_split_loss=min_split_loss)
-        self.max_depth = max_depth
-        self.min_child_weight = min_child_weight
-
-    def get_aux_data(
-            self,
-            x,
-            y=None
-    ) -> dict[str, jax.numpy.ndarray]:
-        rank2index = jax.numpy.argsort(x, axis=0)
-        return {
-            'rank2index': rank2index,
-        }
+        assert num_leaves == -1, f"num_leaves should be -1, {num_leaves} instead"
+        super().__init__(
+            objective=objective,
+            reg_lambda=reg_lambda,
+            reg_alpha=reg_alpha,
+            min_split_loss=min_split_loss,
+            max_depth=max_depth,
+            min_child_weight=min_child_weight
+        )
 
     def build_tree(
             self,
@@ -45,7 +37,7 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             *,
             aux_data: dict[str, jax.numpy.ndarray] | None = None,
             **kwargs,
-    ) -> tuple["Tree", jax.numpy.ndarray]:
+    ) -> GHTree:
         chex.assert_equal(x.shape[0], y.shape[0])
         if sample_weight is not None:
             chex.assert_equal(x.shape[0], p.shape[0])
@@ -56,20 +48,8 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
         n_obs, n_features = x.shape
         num_leaves = 2 ** self.max_depth
 
-        if p is None:
-            p = jax.numpy.zeros_like(y)
-
-        if aux_data is None:
-            aux_data = self.get_aux_data(x, y=y)
-
+        x, y, sample_weight, p, aux_data, gh = self.init_data(x, y, sample_weight, p, aux_data)
         rank2index = aux_data['rank2index']
-
-        # init
-        g, h = self.loss.grad_and_hess(y, p)
-        gh = jax.numpy.stack((g, h), axis=-1)
-        if sample_weight is not None:
-            sample_weight = jax.numpy.reshape(sample_weight, (-1, 1, 1))
-            gh = gh * sample_weight
 
         position = jax.numpy.zeros((n_obs,), dtype=int)
 
@@ -89,7 +69,6 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             mask = (x_ref <= best_split[position]).astype(int)
             position = 2 * position + mask
 
-            # b_gh_r = gh_sum - b_gh_l
             gh_sum = gh_sum.at[1::2].set(best_gh_l[:gh_sum.shape[0] // 2])
             gh_sum = gh_sum.at[::2].set(best_gh_r[:gh_sum.shape[0] // 2])
 
@@ -104,14 +83,44 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
         )
 
         leaf_one_hot = jax.nn.one_hot(position, num_leaves).reshape(n_obs, num_leaves, 1)
-        g_leaves = jax.numpy.sum(leaf_one_hot * jax.numpy.expand_dims(g, 1), axis=0)
-        h_leaves = jax.numpy.sum(leaf_one_hot * jax.numpy.expand_dims(h, 1), axis=0)
+        gh_leaves = jax.numpy.sum(leaf_one_hot * gh, axis=0)
+        values = self.get_leaf_value(gh_leaves)
+        return self.to_ghtree(splits, values)
 
-        values = self._get_leaves(g_leaves, h_leaves)
-        p = jax.numpy.sum(jax.numpy.expand_dims(values, 0) * leaf_one_hot, axis=1)
+    def to_ghtree(self, splits, values):
+        cols, thrs = splits
+        num_nodes = 2 ** (self.max_depth + 1) - 1
+        num_splits = 2 ** self.max_depth - 1
 
-        tree = splits, values
-        return tree, p
+        if values.ndim == 1:
+            values = jax.numpy.reshape(values, (-1, 1))
+
+        col0 = jax.numpy.concat([cols[i, :int(2 ** i)][::-1] for i in range(self.max_depth)])
+        thr0 = jax.numpy.concat([thrs[i, :int(2 ** i)][::-1] for i in range(self.max_depth)])
+
+        col = jax.numpy.zeros((num_nodes,), dtype=jax.numpy.uint32).at[:num_splits].set(col0)
+        thr = jax.numpy.zeros((num_nodes,)).at[:num_splits].set(thr0)
+        val = jax.numpy.zeros((num_nodes, values.shape[-1])).at[num_splits:].set(values[::-1])
+
+        depth = jax.numpy.log2(1 + jax.numpy.arange(num_nodes)).astype(jax.numpy.uint32)
+        ghtree = GHTree(
+            depth=depth,
+
+            # split
+            is_split=depth < depth.max(),
+            col=col,
+            thr=thr,
+            gain=jax.numpy.zeros((num_nodes,)),
+            l_child_id=jax.numpy.arange(num_nodes) * 2 + 1,
+            r_child_id=jax.numpy.arange(num_nodes) * 2 + 2,
+
+            # leaf
+            is_leaf=depth == depth.max(),
+            gh_sum=jax.numpy.zeros((num_nodes, 1, 2)),
+            score=jax.numpy.zeros((num_nodes,)),
+            value=val
+        )
+        return ghtree
 
     def _get_splits_at_level(
             self,
@@ -148,7 +157,7 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             state = best_score, best_col, best_split, best_gh_l, best_gh_r
             return state
 
-        best_score = self._get_score(gh_sum) + self.min_split_loss
+        best_score = self.get_score(gh_sum) + self.min_split_loss
         best_col = jax.numpy.zeros((num_leaves,), dtype=jax.numpy.uint32)
         best_split = jax.numpy.zeros((num_leaves,)) - jax.numpy.inf
         best_gh_l = jax.numpy.zeros_like(gh_sum)
@@ -187,17 +196,26 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
 
             # check the split at 0.5 (fvalue + prev_fvalue)
             split = 0.5 * (fvalue + prev_fvalue[pos])
-            split_score = self._get_score(gh_l[pos]) + self._get_score(gh_r[pos])
+            split_score = self.get_score(gh_l[pos]) + self.get_score(gh_r[pos])
 
             do_update = (split_score > best_score[pos])
             do_update &= (split != fvalue)
             do_update &= (gh_l[pos, ..., 1].sum() >= self.min_child_weight)
             do_update &= (gh_r[pos, ..., 1].sum() >= self.min_child_weight)
 
-            best_score = jax.lax.cond(do_update, lambda: best_score.at[pos].set(split_score), lambda: best_score)
-            best_split = jax.lax.cond(do_update, lambda: best_split.at[pos].set(split), lambda: best_split)
-            best_gh_l = jax.lax.cond(do_update, lambda: best_gh_l.at[pos].set(gh_l[pos]), lambda: best_gh_l)
-            best_gh_r = jax.lax.cond(do_update, lambda: best_gh_r.at[pos].set(gh_r[pos]), lambda: best_gh_r)
+            def do_update_fn():
+                return (
+                    best_score.at[pos].set(split_score),
+                    best_split.at[pos].set(split),
+                    best_gh_l.at[pos].set(gh_l[pos]),
+                    best_gh_r.at[pos].set(gh_r[pos])
+                )
+
+            best_score, best_split, best_gh_l, best_gh_r = jax.lax.cond(
+                do_update,
+                do_update_fn,
+                lambda: (best_score, best_split, best_gh_l, best_gh_r)
+            )
 
             # update with current observation statistics, will be used in the next iteration
             gh_l = gh_l.at[pos].add(gh_i)
