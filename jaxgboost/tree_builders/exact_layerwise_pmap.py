@@ -1,9 +1,7 @@
-import chex
 import jax
 
 from jaxgboost import losses
 from jaxgboost.tree_builders.exact_layerwise import ExactLayerWiseTreesBuilder
-from jaxgboost.trees.tree import GHTree
 
 
 class ExactLayerWisePMapTreesBuilder(ExactLayerWiseTreesBuilder):

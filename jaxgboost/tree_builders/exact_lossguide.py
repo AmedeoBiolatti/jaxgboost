@@ -93,9 +93,9 @@ class LossGuideTreeBuilder(base.TreeBuilder):
             reg_alpha=reg_alpha,
             min_split_loss=min_split_loss,
             max_depth=max_depth,
-            min_child_weight=min_child_weight
+            min_child_weight=min_child_weight,
+            num_leaves=num_leaves
         )
-        self.num_leaves = num_leaves
         self.num_nodes = 4 * self.num_leaves  # 1 splits, 1 for leaves, 2 for candidate leaves
         self.verbosity = verbosity
 
@@ -109,18 +109,7 @@ class LossGuideTreeBuilder(base.TreeBuilder):
             aux_data: dict[str, ArrayLike] | None = None,
             **kwargs,
     ) -> GHTree:
-        if p is None:
-            p = jax.numpy.zeros_like(y)
-
-        if aux_data is None:
-            aux_data = self.get_aux_data(x, y=y)
-
-        g, h = self.loss.grad_and_hess(y, p)
-        gh = jax.numpy.stack((g, h), axis=-1)
-        if sample_weight is not None:
-            sample_weight = jax.numpy.reshape(sample_weight, (-1, 1, 1))
-            gh = gh * sample_weight
-
+        x, y, sample_weight, p, aux_data, gh = self.init_data(x, y, sample_weight, p, aux_data)
         rank2index = aux_data['rank2index']
 
         struct = self.init_struct(gh, rank2index)
@@ -225,11 +214,6 @@ class LossGuideTreeBuilder(base.TreeBuilder):
 
         return struct
 
-    def get_aux_data(self, x, y=None):
-        return {
-            "rank2index": jax.numpy.argsort(x, axis=0)
-        }
-
     def init_struct(self, gh, rank2index) -> Struct:
         gh_sum = jax.numpy.sum(gh, 0)
         struct = Struct.init(rank2index, self.num_nodes, gh.shape[-2])
@@ -240,22 +224,6 @@ class LossGuideTreeBuilder(base.TreeBuilder):
         struct.first_free_id = 1
         struct.should_continue = self.num_leaves > 1
         return struct
-
-    def get_leaf_value(self, gh):
-        g, h = gh[..., 0], gh[..., 1]
-        den = (self.reg_lambda + h)
-        tmp = -g / den
-        num = jax.numpy.where(
-            tmp >= 0,
-            -(g + self.reg_alpha),
-            -(g - self.reg_alpha)
-        )
-        return num / den
-
-    def get_score(self, gh):
-        g, h = gh[..., 0], gh[..., 1]
-        score = g ** 2 / (self.reg_lambda + h)
-        return jax.numpy.sum(score, axis=-1)
 
     def best_split_fori(
             self,

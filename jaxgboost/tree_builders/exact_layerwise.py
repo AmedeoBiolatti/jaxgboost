@@ -26,16 +26,6 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             min_child_weight=min_child_weight
         )
 
-    def get_aux_data(
-            self,
-            x,
-            y=None
-    ) -> dict[str, jax.numpy.ndarray]:
-        rank2index = jax.numpy.argsort(x, axis=0)
-        return {
-            'rank2index': rank2index,
-        }
-
     def build_tree(
             self,
             x: jax.numpy.ndarray,
@@ -56,20 +46,8 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
         n_obs, n_features = x.shape
         num_leaves = 2 ** self.max_depth
 
-        if p is None:
-            p = jax.numpy.zeros_like(y)
-
-        if aux_data is None:
-            aux_data = self.get_aux_data(x, y=y)
-
+        x, y, sample_weight, p, aux_data, gh = self.init_data(x, y, sample_weight, p, aux_data)
         rank2index = aux_data['rank2index']
-
-        # init
-        g, h = self.loss.grad_and_hess(y, p)
-        gh = jax.numpy.stack((g, h), axis=-1)
-        if sample_weight is not None:
-            sample_weight = jax.numpy.reshape(sample_weight, (-1, 1, 1))
-            gh = gh * sample_weight
 
         position = jax.numpy.zeros((n_obs,), dtype=int)
 
@@ -89,7 +67,6 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
             mask = (x_ref <= best_split[position]).astype(int)
             position = 2 * position + mask
 
-            # b_gh_r = gh_sum - b_gh_l
             gh_sum = gh_sum.at[1::2].set(best_gh_l[:gh_sum.shape[0] // 2])
             gh_sum = gh_sum.at[::2].set(best_gh_r[:gh_sum.shape[0] // 2])
 
@@ -104,10 +81,9 @@ class ExactLayerWiseTreesBuilder(TreeBuilder):
         )
 
         leaf_one_hot = jax.nn.one_hot(position, num_leaves).reshape(n_obs, num_leaves, 1)
-        g_leaves = jax.numpy.sum(leaf_one_hot * jax.numpy.expand_dims(g, 1), axis=0)
-        h_leaves = jax.numpy.sum(leaf_one_hot * jax.numpy.expand_dims(h, 1), axis=0)
+        gh_leaves = jax.numpy.sum(leaf_one_hot * gh, axis=0)
 
-        values = self._get_leaves(g_leaves, h_leaves)
+        values = self.get_leaf_value(gh_leaves)
         return self.to_ghtree(splits, values)
 
     def to_ghtree(self, splits, values):
