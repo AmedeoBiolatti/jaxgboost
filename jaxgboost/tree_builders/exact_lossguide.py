@@ -13,6 +13,7 @@ class Struct:
     tree: GHTree
     rank_start: ArrayLike
     rank_end: ArrayLike
+    rank: ArrayLike
     rank2index: ArrayLike
     first_free_id: int
     next_node_to_expand: ArrayLike = 0
@@ -23,23 +24,25 @@ class Struct:
         n_obs, n_col = rank2index.shape
         rank_start = jax.numpy.zeros((num_nodes,), dtype=jax.numpy.uint32)
         rank_end = jax.numpy.zeros((num_nodes,), dtype=jax.numpy.uint32) + n_obs
+        rank = jax.numpy.zeros((num_nodes,), dtype=jax.numpy.uint32) + n_obs
         first_free_id = 0
         tree = GHTree.init(num_nodes, num_targets)
         return cls(
             tree=tree,
             rank_start=rank_start,
             rank_end=rank_end,
+            rank=rank,
             rank2index=rank2index,
             first_free_id=first_free_id
         )
 
 
-def update_rank2index(rank2index, mask, col, rank_start, rank_end):
+def update_rank2index(rank2index, x, col, thr, rank, rank_start, rank_end):
     def update_col(col_to_update, new_rank2index):
         def step(rank, state):
             kt, kf, v = state
             i = rank2index[rank, col_to_update]
-            m = mask[i]
+            m = x[i, col] <= thr
 
             vr = rank2index[rank, col_to_update]
 
@@ -53,19 +56,9 @@ def update_rank2index(rank2index, mask, col, rank_start, rank_end):
             kf = kf + (~m).astype(jax.numpy.uint32)
 
             state = kt, kf, v
-
             return state
 
-        def cond_fn(state):
-            return state[0] < rank_end
-
-        def sum_fn(state):
-            r, s = state
-            s = s + mask[rank2index[r, col]].astype(s.dtype)
-            return r + 1, s
-
-        _, nt = jax.lax.while_loop(cond_fn, sum_fn, (rank_start, jax.numpy.uint32(0)))
-
+        nt = rank - rank_start
         kt = rank_start
         kf = rank_start + nt
 
@@ -167,16 +160,17 @@ class LossGuideTreeBuilder(base.TreeBuilder):
     def from_leaf_to_split(self, struct: Struct, x: ArrayLike, gh: ArrayLike, node_id) -> Struct:
         struct.tree.is_leaf = struct.tree.is_leaf.at[node_id].set(False)
         struct.tree.is_split = struct.tree.is_split.at[node_id].set(True)
-
         col = struct.tree.col[node_id]
         thr = struct.tree.thr[node_id]
-        mask = x[:, col] <= thr  # TODO
+
         struct.rank2index = update_rank2index(
             struct.rank2index,
-            mask=mask,
+            x=x,
             col=col,
+            thr=thr,
             rank_start=struct.rank_start[node_id],
             rank_end=struct.rank_end[node_id],
+            rank=struct.rank[node_id],
         )
 
         l_child_id = struct.tree.l_child_id[node_id]
@@ -211,7 +205,7 @@ class LossGuideTreeBuilder(base.TreeBuilder):
         struct.tree.gain = struct.tree.gain.at[node_id].set(gain)
         struct.tree.col = struct.tree.col.at[node_id].set(col)
         struct.tree.thr = struct.tree.thr.at[node_id].set(thr)
-        # struct.tree.rank = struct.tree.rank.at[node_id].set(rank)
+        struct.rank = struct.rank.at[node_id].set(rank)
 
         # l child
         struct.tree.score = struct.tree.score.at[l_child_id].set(score_l)
@@ -376,5 +370,5 @@ class LossGuideTreeBuilder(base.TreeBuilder):
 
         state_while = jax.lax.while_loop(lambda arg: arg[0] < rank_end, loop_fn_while, state_while)
 
-        _, (best_score_l, best_score_r, best_split, best_thr, best_gh_l, best_gh_r, _, _, _) = state_while
-        return best_score_l, best_score_r, best_split, best_thr, best_gh_l, best_gh_r
+        _, (best_score_l, best_score_r, best_split, best_rank, best_gh_l, best_gh_r, _, _, _) = state_while
+        return best_score_l, best_score_r, best_split, best_rank, best_gh_l, best_gh_r
