@@ -34,6 +34,7 @@ JAXGBoost supports JAX functionalities such as `jit` and `vmap`. Here's an examp
 ```python
 import jax
 
+
 # Create a jitted vectorized function
 @jax.jit
 @jax.vmap
@@ -52,7 +53,8 @@ print(mse_values.shape)
 ### Roadmap
 
 - [x] exact layer-wise tree building
-- [ ] loss-guide tree building
+- [x] loss-guide tree building
 - [ ] hist tree building
 - [ ] gradient-friendly implementation for hyper-opt
 - [ ] "softened" prediction for better integration in NN
+- [ ] logging
