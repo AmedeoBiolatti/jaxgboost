@@ -34,7 +34,7 @@ class JAXGBoostModel:
             max_depth: int = 6,
             min_child_weight: float = 0.0,
             grow_policy: str = "depthwise",
-            num_leaves=None,
+            num_leaves: int = -1,
             random_state: int = 42,
             jit: bool = True
     ):
