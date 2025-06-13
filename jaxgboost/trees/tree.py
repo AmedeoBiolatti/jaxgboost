@@ -53,7 +53,11 @@ class GHTree:
         def _fn(state):
             i, xi = state
             go_left = xi[self.col[i]] <= self.thr[i]
-            i = jax.numpy.where(go_left, self.l_child_id[i], self.r_child_id[i])
+            i = jax.lax.cond(
+                self.is_split[i],
+                lambda: jax.numpy.where(go_left, self.l_child_id[i], self.r_child_id[i]),
+                lambda: i
+            )
             return i, xi
 
         def _predict_one(xi):
